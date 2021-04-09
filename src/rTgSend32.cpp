@@ -7,7 +7,7 @@
 #include "freertos/queue.h" 
 #include "project_config.h"
 #include "rLog.h"
-#include "rEsp32.h"
+#include "rStrings.h"
 #include "rLed32.h"
 #include "rLedSys32.h"
 #include "rWiFi32.h"
