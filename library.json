@@ -1,0 +1,17 @@
+{
+  "name": "rTgSend32",
+  "version": "1.2.0",
+  "description": "Library for sending notifications to Telegram from a device to ESP32",
+  "keywords": "telegram",
+  "authors":
+  [
+    {
+      "name": "Alexander Razzhivin",
+      "email": "kotyara12@yandex.ru",
+      "url": "https://kotyara12.ru"
+    }
+  ],
+  "license": "MIT",
+  "platforms": ["espressif32"],
+  "frameworks": ["arduino", "espidf"]
+}
