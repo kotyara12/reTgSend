@@ -15,7 +15,16 @@
 extern "C" {
 #endif
 
+/**
+ * @brief We create and launch a task (and a queue) to send notifications.
+ * @return true - successful, false - failure
+ * */
 bool tgTaskCreate();
+
+/**
+ * @brief We pause the task for sending notifications. For example, when disconnecting from WiFi.
+ * @return true - successful, false - failure
+ * */
 bool tgTaskSuspend();
 bool tgTaskResume();
 bool tgTaskDelete();
