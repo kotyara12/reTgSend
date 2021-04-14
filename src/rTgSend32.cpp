@@ -16,15 +16,6 @@
 #include "esp_tls.h"
 #include "esp_http_client.h"
 
-TaskHandle_t _tgTask;
-QueueHandle_t _tgQueue = NULL;
-
-static const char* tagTG = "TG";
-static const char* tgTaskName = "tgSend";
-
-extern const char api_telegram_org_pem_start[] asm(CONFIG_TELEGRAM_TLS_PEM_START);
-extern const char api_telegram_org_pem_end[]   asm(CONFIG_TELEGRAM_TLS_PEM_END); 
-
 #define API_TELEGRAM_HOST "api.telegram.org"
 #define API_TELEGRAM_PORT 443
 #define API_TELEGRAM_BOT_PATH "/bot" CONFIG_TELEGRAM_TOKEN
@@ -42,6 +33,24 @@ typedef struct {
   time_t timestamp;
   bool notify;
 } tgMessage_t;
+
+#define TELEGRAM_QUEUE_ITEM_SIZE sizeof(tgMessage_t*)
+
+TaskHandle_t _tgTask;
+QueueHandle_t _tgQueue = NULL;
+
+static const char* tagTG = "TG";
+static const char* tgTaskName = "tgSend";
+
+extern const char api_telegram_org_pem_start[] asm(CONFIG_TELEGRAM_TLS_PEM_START);
+extern const char api_telegram_org_pem_end[]   asm(CONFIG_TELEGRAM_TLS_PEM_END); 
+
+#if CONFIG_TELEGRAM_STATIC_ALLOCATION
+StaticQueue_t _tgQueueBuffer;
+StaticTask_t _tgTaskBuffer;
+StackType_t _tgTaskStack[CONFIG_TELEGRAM_STACK_SIZE];
+uint8_t _tgQueueStorage [CONFIG_TELEGRAM_QUEUE_SIZE * TELEGRAM_QUEUE_ITEM_SIZE];
+#endif // CONFIG_TELEGRAM_STATIC_ALLOCATION
 
 char* tgNotifyEx(const tgMessage_t* tgMsg)
 {
@@ -224,12 +233,15 @@ bool tgTaskResume()
   };
 }
 
-
 bool tgTaskCreate() 
 {
   if (_tgTask == NULL) {
     if (_tgQueue == NULL) {
-      _tgQueue = xQueueCreate(CONFIG_TELEGRAM_QUEUE_SIZE, sizeof(tgMessage_t*));
+      #if CONFIG_TELEGRAM_STATIC_ALLOCATION
+      _tgQueue = xQueueCreateStatic(CONFIG_TELEGRAM_QUEUE_SIZE, TELEGRAM_QUEUE_ITEM_SIZE, &(_tgQueueStorage[0]), &_tgQueueBuffer);
+      #else
+      _tgQueue = xQueueCreate(CONFIG_TELEGRAM_QUEUE_SIZE, TELEGRAM_QUEUE_ITEM_SIZE);
+      #endif // CONFIG_TELEGRAM_STATIC_ALLOCATION
       if (_tgQueue == NULL) {
         rloga_e("Failed to create a queue for sending notifications to Telegram!");
         ledSysStateSet(SYSLED_ERROR, false);
@@ -237,7 +249,11 @@ bool tgTaskCreate()
       };
     };
     
+    #if CONFIG_TELEGRAM_STATIC_ALLOCATION
+    _tgTask = xTaskCreateStaticPinnedToCore(tgTaskExec, tgTaskName, CONFIG_TELEGRAM_STACK_SIZE, NULL, CONFIG_TELEGRAM_PRIORITY, _tgTaskStack, &_tgTaskBuffer, CONFIG_TELEGRAM_CORE); 
+    #else
     xTaskCreatePinnedToCore(tgTaskExec, tgTaskName, CONFIG_TELEGRAM_STACK_SIZE, NULL, CONFIG_TELEGRAM_PRIORITY, &_tgTask, CONFIG_TELEGRAM_CORE); 
+    #endif // CONFIG_TELEGRAM_STATIC_ALLOCATION
     if (_tgTask == NULL) {
       vQueueDelete(_tgQueue);
       rloga_e("Failed to create task for sending notifications to Telegram!");
