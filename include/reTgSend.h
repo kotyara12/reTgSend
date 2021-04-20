@@ -6,8 +6,8 @@
    kotyara12@yandex.ru | https://kotyara12.ru | tg: @kotyara1971
 */
 
-#ifndef __RTGSEND32_H__
-#define __RTGSEND32_H__
+#ifndef __RE_TGSEND_H__
+#define __RE_TGSEND_H__
 
 #include <stddef.h>
 
@@ -34,4 +34,4 @@ bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...
 }
 #endif
 
-#endif // __RTGSEND32_H__
+#endif // __RE_TGSEND_H__

@@ -1,5 +1,5 @@
 {
-  "name": "rTgSend32",
+  "name": "reTgSend",
   "version": "1.2.0",
   "description": "Library for sending notifications to Telegram from a device to ESP32",
   "keywords": "telegram",
