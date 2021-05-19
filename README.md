@@ -13,7 +13,7 @@ Library for sending notifications to Telegram from a device to ESP32. There is a
   - libraries starting with the <b>ra</b> prefix are only suitable for ARDUINO compatible code
   - libraries starting with the <b>r</b> prefix can be used in both cases (in ESP-IDF and in ARDUINO)
 
-## Parameters (preprocessor macros) in the "project_config.h" file that control the operation of the module
+## Parameters of the module
 The module is configured using macros located in the general project configuration file "project_config.h":
 
 <pre>
