@@ -15,6 +15,7 @@ Library for sending notifications to Telegram from a device to ESP32. There is a
 
 ## Parameters (preprocessor macros) in the "project_config.h" file that control the operation of the module
 // -----------------------------------------------------------------------------------------------------------------------
+
 // ---------------------------------------------- EN - Telegram notify ---------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 // Allow Telegram notifications (general flag)
