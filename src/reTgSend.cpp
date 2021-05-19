@@ -67,13 +67,13 @@ bool tgSendEx(const tgMessage_t* tgMsg)
   struct tm timeinfo;
   static char buffer_timestamp[20];
 
-  // Формируем текст запроса (сообщения)
+  // Formation of the request text (message)
   localtime_r(&tgMsg->timestamp, &timeinfo);
   strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_TELEGRAM_TIME_FORMAT, &timeinfo);
   char* json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE, 
     CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
 
-  // Настраиваем параметры запроса
+  // Configuring request parameters
   esp_http_client_config_t cfgHttp;
   memset(&cfgHttp, 0, sizeof(cfgHttp));
   cfgHttp.method = HTTP_METHOD_POST;
@@ -86,7 +86,7 @@ bool tgSendEx(const tgMessage_t* tgMsg)
   cfgHttp.skip_cert_common_name_check = false;
   cfgHttp.is_async = false;
 
-  // Выполняем запрос к Telegram API
+  // Making a request to the Telegram API
   esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
   if (client != NULL) {
     esp_http_client_set_header(client, API_TELEGRAM_HEADER_CTYPE, API_TELEGRAM_HEADER_AJSON);
@@ -122,14 +122,14 @@ void tgTaskExec(void *pvParameters)
     if (xQueuePeek(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS) {
       rlog_v(tagTG, "Message received from queue: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
 
-      // Ждем подключения к интернету, если его нет (а ещё можно приостановить задачу если соединение прервано, но это не обязательно)
+      // We are waiting for an Internet connection, if it is not (and you can also pause the task if the connection is interrupted, but this is not necessary)
       if (!wifiIsConnected()) {
         ledSysStateSet(SYSLED_TELEGRAM_ERROR, false);
         wifiWaitConnection(portMAX_DELAY);
         ledSysStateClear(SYSLED_TELEGRAM_ERROR, false);
       };
       
-      // Пытаемся отправить сообщение в API Telegram
+      // Trying to send a message to the Telegram API
       uint16_t tryAttempt = 1;
       bool resAttempt = false;
       do 
@@ -146,7 +146,7 @@ void tgTaskExec(void *pvParameters)
         // esp_task_wdt_reset();
       } while (!resAttempt && (tryAttempt <= CONFIG_TELEGRAM_MAX_ATTEMPTS));
       
-      // Отладочный вывод
+      // Debug log output
       if (resAttempt) {
         rlog_i(tagTG, "Message sent: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
       }
@@ -154,7 +154,7 @@ void tgTaskExec(void *pvParameters)
         rlog_e(tagTG, "Failed to send message [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
       };
 
-      // Удаляем сообщение из очереди (в любом случае)
+      // Removing a message from the queue (anyway)
       xQueueReceive(_tgQueue, &tgMsg, 0);
       // Freeing the memory allocated for the message
       free(tgMsg->title);
