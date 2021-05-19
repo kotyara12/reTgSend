@@ -17,7 +17,7 @@ Library for sending notifications to Telegram from a device to ESP32. There is a
 The module is configured using macros located in the general project configuration file "project_config.h":
 
 <pre>
-// EN: Allow Telegram notifications (general flag)<br/>
+// Allow Telegram notifications (general flag)<br/>
 #define CONFIG_TELEGRAM_ENABLE 1<br/>
 #if CONFIG_TELEGRAM_ENABLE<br/>
 // TLS certificate for Telegram API<br/>
