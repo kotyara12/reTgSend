@@ -10,6 +10,7 @@
 #include "rStrings.h"
 #include "reLed.h"
 #include "reLedSys.h"
+#include "rePing.h"
 #include "reWiFi.h"
 #include "reTgSend.h"
 #include "esp_wifi.h" 
@@ -122,18 +123,14 @@ void tgTaskExec(void *pvParameters)
     if (xQueuePeek(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS) {
       rlog_v(tagTG, "Message received from queue: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
 
-      // We are waiting for an Internet connection, if it is not (and you can also pause the task if the connection is interrupted, but this is not necessary)
-      if (!wifiIsConnected()) {
-        ledSysStateSet(SYSLED_TELEGRAM_ERROR, false);
-        wifiWaitConnection(portMAX_DELAY);
-        ledSysStateClear(SYSLED_TELEGRAM_ERROR, false);
-      };
-      
       // Trying to send a message to the Telegram API
       uint16_t tryAttempt = 1;
       bool resAttempt = false;
-      do 
-      {
+      do {
+        // Checking Internet and host availability
+        checkHost(API_TELEGRAM_HOST, tryAttempt > 1, tagTG, SYSLED_TELEGRAM_ERROR, nullptr, nullptr, 
+          CONFIG_HOST_PING_SESSION_COUNT, CONFIG_HOST_PING_SESSION_INTERVAL, CONFIG_HOST_PING_SESSION_TIMEOUT, CONFIG_HOST_PING_SESSION_DATASIZE);
+
         resAttempt = tgSendEx(tgMsg);
         if (resAttempt) {
           ledSysStateClear(SYSLED_TELEGRAM_ERROR, false);
