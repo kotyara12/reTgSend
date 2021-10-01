@@ -17,9 +17,10 @@ extern "C" {
 
 /**
  * @brief We create and launch a task (and a queue) to send notifications.
+ * @param createSuspended - if true, the task will be suspended immediately and event handlers will be registered
  * @return true - successful, false - failure
  * */
-bool tgTaskCreate();
+bool tgTaskCreate(bool createSuspended);
 
 /**
  * @brief We pause the task for sending notifications. For example, when disconnecting from WiFi.
@@ -43,6 +44,14 @@ bool tgTaskDelete();
  * @return true - successful, false - failure
  * */
 bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...);
+
+/**
+ * @brief Registering event handlers to automatically send notifications
+ * 
+ * @return true - successful, false - failure
+ * */
+bool tgEventHandlerRegister();
+void tgEventHandlerUnregister();
 
 #ifdef __cplusplus
 }

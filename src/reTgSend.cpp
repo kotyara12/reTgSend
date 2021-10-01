@@ -8,14 +8,15 @@
 #include "project_config.h"
 #include "rLog.h"
 #include "rStrings.h"
-#include "reLed.h"
-#include "reLedSys.h"
-#include "rePing.h"
-#include "reWiFi.h"
 #include "reTgSend.h"
+#include "reEvents.h"
+#include "reStates.h"
 #include "esp_wifi.h" 
 #include "esp_tls.h"
 #include "esp_http_client.h"
+#if CONFIG_PINGER_ENABLE
+#include "rePinger.h"
+#endif // CONFIG_PINGER_ENABLE
 
 #define API_TELEGRAM_HOST "api.telegram.org"
 #define API_TELEGRAM_PORT 443
@@ -40,8 +41,8 @@ typedef struct {
 TaskHandle_t _tgTask;
 QueueHandle_t _tgQueue = NULL;
 
-static const char* tagTG = "TG";
-static const char* tgTaskName = "tgSend";
+static const char* logTAG = "TG";
+static const char* tgTaskName = "tg_send";
 
 extern const char api_telegram_org_pem_start[] asm(CONFIG_TELEGRAM_TLS_PEM_START);
 extern const char api_telegram_org_pem_end[]   asm(CONFIG_TELEGRAM_TLS_PEM_END); 
@@ -63,14 +64,16 @@ char* tgNotifyEx(const tgMessage_t* tgMsg)
 
 bool tgSendEx(const tgMessage_t* tgMsg)
 {
-  ledSysOn(true);
   bool _result = true;
   struct tm timeinfo;
   static char buffer_timestamp[20];
 
+  // Flashing system LED
+  eventLoopPostSystem(RE_SYS_SYSLED, RE_SYS_FLASH);
+
   // Formation of the request text (message)
   localtime_r(&tgMsg->timestamp, &timeinfo);
-  strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_TELEGRAM_TIME_FORMAT, &timeinfo);
+  strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_FORMAT_DTS, &timeinfo);
   char* json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE, 
     CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
 
@@ -97,75 +100,26 @@ bool tgSendEx(const tgMessage_t* tgMsg)
       int retCode = esp_http_client_get_status_code(client);
       _result = ((retCode == 200) || (retCode == 301));
       if (!_result)
-        rlog_e(tagTG, "Failed to send message, API error code: #%d!", retCode);
+        rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
     }
     else {
       _result = false;
-      rlog_e(tagTG, "Failed to complete request to Telegram API, error code: 0x%x!", err);
+      rlog_e(logTAG, "Failed to complete request to Telegram API, error code: 0x%x!", err);
     };
     esp_http_client_cleanup(client);
   }
   else {
     _result = false;
-    rlog_e(tagTG, "Failed to complete request to Telegram API!");
+    rlog_e(logTAG, "Failed to complete request to Telegram API!");
   };
 
   if (json) free(json);
-  ledSysOff(true);
   return _result;
-}
-
-void tgTaskExec(void *pvParameters)
-{
-  tgMessage_t *tgMsg;
-
-  while (true) {
-    if (xQueuePeek(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS) {
-      rlog_v(tagTG, "Message received from queue: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
-
-      // Trying to send a message to the Telegram API
-      uint16_t tryAttempt = 1;
-      bool resAttempt = false;
-      do {
-        // Checking Internet and host availability
-        checkHost(API_TELEGRAM_HOST, tryAttempt > 1, tagTG, SYSLED_TELEGRAM_ERROR, nullptr, nullptr, 
-          CONFIG_HOST_PING_SESSION_COUNT, CONFIG_HOST_PING_SESSION_INTERVAL, CONFIG_HOST_PING_SESSION_TIMEOUT, CONFIG_HOST_PING_SESSION_DATASIZE);
-
-        resAttempt = tgSendEx(tgMsg);
-        if (resAttempt) {
-          ledSysStateClear(SYSLED_TELEGRAM_ERROR, false);
-        }
-        else {
-          ledSysStateSet(SYSLED_TELEGRAM_ERROR, false);
-          tryAttempt++;
-          vTaskDelay(CONFIG_TELEGRAM_ATTEMPTS_INTERVAL / portTICK_RATE_MS);
-        };
-        // esp_task_wdt_reset();
-      } while (!resAttempt && (tryAttempt <= CONFIG_TELEGRAM_MAX_ATTEMPTS));
-      
-      // Debug log output
-      if (resAttempt) {
-        rlog_i(tagTG, "Message sent: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
-      }
-      else {
-        rlog_e(tagTG, "Failed to send message [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
-      };
-
-      // Removing a message from the queue (anyway)
-      xQueueReceive(_tgQueue, &tgMsg, 0);
-      // Freeing the memory allocated for the message
-      free(tgMsg->title);
-      free(tgMsg->message);
-      delete tgMsg;
-    };
-  };
-
-  tgTaskDelete();
 }
 
 bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...)
 {
-  if (_tgQueue != NULL) {
+  if (_tgQueue) {
     uint32_t lenTitle;
     uint32_t lenText;
     va_list msgArgs;
@@ -193,7 +147,7 @@ bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...
     }
     else {
       rloga_e("Error adding message to queue [ %s ]!", tgTaskName);
-      ledSysStateSet(SYSLED_TELEGRAM_ERROR, false);
+      eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
       // Freeing the memory allocated for the message
       free(tgMsg->title);
       free(tgMsg->message);
@@ -204,44 +158,68 @@ bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...
   return false;
 }
 
-bool tgTaskSuspend()
+// -----------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------- Task routines ----------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+void tgTaskExec(void *pvParameters)
 {
-  if ((_tgTask != NULL) && (eTaskGetState(_tgTask) != eSuspended)) {
-    vTaskSuspend(_tgTask);
-    rloga_d("Task [ %s ] has been successfully suspended", tgTaskName);
-    return true;
-  }
-  else {
-    rloga_w("Task [ %s ] not found or is already suspended", tgTaskName);
-    return false;
+  tgMessage_t *tgMsg;
+
+  while (true) {
+    if (xQueuePeek(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS) {
+      rlog_v(logTAG, "Message received from queue: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
+
+      // Trying to send a message to the Telegram API
+      uint16_t tryAttempt = 1;
+      bool resAttempt = false;
+      do {
+        // Checking Internet and host availability
+        if (statesInetWait(pdMS_TO_TICKS(CONFIG_TELEGRAM_ATTEMPTS_INTERVAL))) {
+          resAttempt = tgSendEx(tgMsg);
+          if (resAttempt) {
+            eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
+          }
+          else {
+            eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
+            tryAttempt++;
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_TELEGRAM_ATTEMPTS_INTERVAL));
+          };
+        };
+      } while (!resAttempt && (tryAttempt <= CONFIG_TELEGRAM_MAX_ATTEMPTS));
+      
+      // Debug log output
+      if (resAttempt) {
+        rlog_i(logTAG, "Message sent: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
+      }
+      else {
+        rlog_e(logTAG, "Failed to send message [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
+      };
+
+      // Removing a message from the queue (anyway)
+      xQueueReceive(_tgQueue, &tgMsg, 0);
+      // Freeing the memory allocated for the message
+      free(tgMsg->title);
+      free(tgMsg->message);
+      delete tgMsg;
+    };
   };
+
+  tgTaskDelete();
 }
 
-bool tgTaskResume()
+bool tgTaskCreate(bool createSuspended) 
 {
-  if ((_tgTask != NULL) && wifiIsConnected() && (eTaskGetState(_tgTask) == eSuspended)) {
-    vTaskResume(_tgTask);
-    rloga_d("Task [ %s ] has been successfully started", tgTaskName);
-    return true;
-  }
-  else {
-    rloga_w("Task [ %s ] is not found or is already running", tgTaskName);
-    return false;
-  };
-}
-
-bool tgTaskCreate() 
-{
-  if (_tgTask == NULL) {
-    if (_tgQueue == NULL) {
+  if (!_tgTask) {
+    if (!_tgQueue) {
       #if CONFIG_TELEGRAM_STATIC_ALLOCATION
       _tgQueue = xQueueCreateStatic(CONFIG_TELEGRAM_QUEUE_SIZE, TELEGRAM_QUEUE_ITEM_SIZE, &(_tgQueueStorage[0]), &_tgQueueBuffer);
       #else
       _tgQueue = xQueueCreate(CONFIG_TELEGRAM_QUEUE_SIZE, TELEGRAM_QUEUE_ITEM_SIZE);
       #endif // CONFIG_TELEGRAM_STATIC_ALLOCATION
-      if (_tgQueue == NULL) {
+      if (!_tgQueue) {
         rloga_e("Failed to create a queue for sending notifications to Telegram!");
-        ledSysStateSet(SYSLED_ERROR, false);
+        eventLoopPostSystem(RE_SYS_ERROR, RE_SYS_SET, false);
         return false;
       };
     };
@@ -251,16 +229,23 @@ bool tgTaskCreate()
     #else
     xTaskCreatePinnedToCore(tgTaskExec, tgTaskName, CONFIG_TELEGRAM_STACK_SIZE, NULL, CONFIG_TELEGRAM_PRIORITY, &_tgTask, CONFIG_TELEGRAM_CORE); 
     #endif // CONFIG_TELEGRAM_STATIC_ALLOCATION
-    if (_tgTask == NULL) {
+    if (!_tgTask) {
       vQueueDelete(_tgQueue);
       rloga_e("Failed to create task for sending notifications to Telegram!");
-      ledSysStateSet(SYSLED_ERROR, false);
+      eventLoopPostSystem(RE_SYS_ERROR, RE_SYS_SET, false);
       return false;
     }
     else {
-      rloga_d("Task [ %s ] has been successfully started", tgTaskName);
-      ledSysStateClear(SYSLED_TELEGRAM_ERROR, false);
-      return true;
+      if (createSuspended) {
+        rloga_i("Task [ %s ] has been successfully created", tgTaskName);
+        tgTaskSuspend();
+        eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
+        return tgEventHandlerRegister();
+      } else {
+        rloga_i("Task [ %s ] has been successfully started", tgTaskName);
+        eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
+        return true;
+      };
     };
   }
   else {
@@ -268,15 +253,48 @@ bool tgTaskCreate()
   };
 }
 
+bool tgTaskSuspend()
+{
+  if ((_tgTask) && (eTaskGetState(_tgTask) != eSuspended)) {
+    vTaskSuspend(_tgTask);
+    if (eTaskGetState(_tgTask) == eSuspended) {
+      rloga_d("Task [ %s ] has been suspended", tgTaskName);
+      return true;
+    } else {
+      rloga_e("Failed to suspend task [ %s ]!", tgTaskName);
+    };
+    eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
+  };
+  return false;
+}
+
+bool tgTaskResume()
+{
+  if ((_tgTask) && (eTaskGetState(_tgTask) == eSuspended)) {
+    vTaskResume(_tgTask);
+    if (eTaskGetState(_tgTask) != eSuspended) {
+      rloga_i("Task [ %s ] has been successfully resumed", tgTaskName);
+      eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
+      return true;
+    } else {
+      rloga_e("Failed to resume task [ %s ]!", tgTaskName);
+      eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
+    };
+  };
+  return false;
+}
+
 bool tgTaskDelete()
 {
-  if (_tgQueue != NULL) {
+  tgEventHandlerUnregister();
+
+  if (_tgQueue) {
     vQueueDelete(_tgQueue);
     rloga_v("The queue for sending notifications in Telegram has been deleted");
     _tgQueue = NULL;
   };
 
-  if (_tgTask != NULL) {
+  if (_tgTask) {
     vTaskDelete(_tgTask);
     _tgTask = NULL;
     rloga_d("Task [ %s ] was deleted", tgTaskName);
@@ -285,3 +303,65 @@ bool tgTaskDelete()
   return true;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------- Event handlers ----------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+static void tgWiFiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  // STA connected & Internet access enabled
+  if (event_id == RE_WIFI_STA_PING_OK) {
+    if (_tgTask) {
+      if (tgTaskResume()) {
+        eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
+      };
+    } else {
+      if (tgTaskCreate(false)) {
+        eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
+      };
+    };
+  }
+  // All other events
+  else {
+    tgTaskSuspend();
+    eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
+  };
+}
+
+#if CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+
+static void tgTelegramEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  // Telegram API available
+  if (event_id == RE_PING_TG_API_AVAILABLE) {
+    if (tgTaskResume()) {
+      eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
+    };
+  }
+  // Telegram API unavailable
+  else if (event_id == RE_PING_TG_API_UNAVAILABLE) {
+    tgTaskSuspend();
+    eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
+  };
+}
+
+#endif // CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+
+bool tgEventHandlerRegister()
+{
+  bool ret = eventHandlerRegister(RE_WIFI_EVENTS, ESP_EVENT_ANY_ID, &tgWiFiEventHandler, nullptr);
+  #if CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+    ret = ret && eventHandlerRegister(RE_PING_EVENTS, RE_PING_TG_API_AVAILABLE, &tgTelegramEventHandler, nullptr);
+    ret = ret && eventHandlerRegister(RE_PING_EVENTS, RE_PING_TG_API_UNAVAILABLE, &tgTelegramEventHandler, nullptr);
+  #endif // CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+  return ret;
+}
+
+void tgEventHandlerUnregister()
+{
+  eventHandlerUnregister(RE_WIFI_EVENTS, ESP_EVENT_ANY_ID, &tgWiFiEventHandler);
+  #if CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_TG_API_AVAILABLE, &tgTelegramEventHandler);
+    eventHandlerUnregister(RE_PING_EVENTS, RE_PING_TG_API_UNAVAILABLE, &tgTelegramEventHandler);
+  #endif // CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+}
