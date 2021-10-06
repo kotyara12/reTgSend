@@ -68,9 +68,6 @@ bool tgSendEx(const tgMessage_t* tgMsg)
   struct tm timeinfo;
   static char buffer_timestamp[20];
 
-  // Flashing system LED
-  eventLoopPostSystem(RE_SYS_SYSLED, RE_SYS_FLASH);
-
   // Formation of the request text (message)
   localtime_r(&tgMsg->timestamp, &timeinfo);
   strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_FORMAT_DTS, &timeinfo);
@@ -101,6 +98,8 @@ bool tgSendEx(const tgMessage_t* tgMsg)
       _result = ((retCode == 200) || (retCode == 301));
       if (!_result)
         rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
+      // Flashing system LED
+      ledSysActivity();
     }
     else {
       _result = false;
