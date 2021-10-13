@@ -22,7 +22,8 @@
 #define API_TELEGRAM_PORT 443
 #define API_TELEGRAM_BOT_PATH "/bot" CONFIG_TELEGRAM_TOKEN
 #define API_TELEGRAM_SEND_MESSAGE API_TELEGRAM_BOT_PATH "/sendMessage"
-#define API_TELEGRAM_TMPL_MESSAGE "{\"chat_id\":%s,\"parse_mode\":\"HTML\",\"disable_notification\":%s,\"text\":\"<b>%s</b>\r\n\r\n%s\r\n\r\n<code>%s</code>\"}"
+#define API_TELEGRAM_TMPL_MESSAGE_TITLED "{\"chat_id\":%s,\"parse_mode\":\"HTML\",\"disable_notification\":%s,\"text\":\"<b>%s</b>\r\n\r\n%s\r\n\r\n<code>%s</code>\"}"
+#define API_TELEGRAM_TMPL_MESSAGE_SIMPLE "{\"chat_id\":%s,\"parse_mode\":\"HTML\",\"disable_notification\":%s,\"text\":\"%s\r\n\r\n<code>%s</code>\"}"
 #define API_TELEGRAM_HEADER_CTYPE "Content-Type"
 #define API_TELEGRAM_HEADER_AJSON "application/json"
 #define API_TELEGRAM_FALSE "false"
@@ -71,8 +72,14 @@ bool tgSendEx(const tgMessage_t* tgMsg)
   // Formation of the request text (message)
   localtime_r(&tgMsg->timestamp, &timeinfo);
   strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_FORMAT_DTS, &timeinfo);
-  char* json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE, 
-    CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
+  char* json = nullptr;
+  if (tgMsg->title) {
+    json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_TITLED, 
+      CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
+  } else {
+    json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_SIMPLE, 
+      CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->message, buffer_timestamp);
+  };
 
   // Configuring request parameters
   esp_http_client_config_t cfgHttp;
@@ -96,8 +103,9 @@ bool tgSendEx(const tgMessage_t* tgMsg)
     if (err == ESP_OK) {
       int retCode = esp_http_client_get_status_code(client);
       _result = ((retCode == 200) || (retCode == 301));
-      if (!_result)
+      if (!_result) {
         rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
+      };
       // Flashing system LED
       ledSysActivity();
     }
@@ -124,19 +132,23 @@ bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...
     va_list msgArgs;
 
     // Allocating memory for the message
-    tgMessage_t* tgMsg = new tgMessage_t;
+    tgMessage_t* tgMsg = (tgMessage_t*)calloc(1, sizeof(tgMessage_t));
     tgMsg->notify = msgNotify;
     tgMsg->timestamp = time(NULL);
 
     // Allocating memory for the message header
-    lenTitle = snprintf(NULL, 0, msgTitle);
-    tgMsg->title = (char*)malloc(lenTitle+1);
-    snprintf(tgMsg->title, lenTitle+1, msgTitle);
+    #if CONFIG_TELEGRAM_TITLE_ENABLED
+      lenTitle = snprintf(NULL, 0, msgTitle);
+      tgMsg->title = (char*)calloc(1, lenTitle+1);
+      snprintf(tgMsg->title, lenTitle+1, msgTitle);
+    #else
+      tgMsg->title = nullptr;
+    #endif // CONFIG_TELEGRAM_TITLE_ENABLED
     
     // Allocate memory for the message text and format it
     va_start(msgArgs, msgText);
     lenText = vsnprintf(NULL, 0, msgText, msgArgs);
-    tgMsg->message = (char*)malloc(lenText+1);
+    tgMsg->message = (char*)calloc(1, lenText+1);
     vsnprintf(tgMsg->message, lenText+1, msgText, msgArgs);
     va_end(msgArgs);
 
@@ -148,9 +160,9 @@ bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...
       rloga_e("Error adding message to queue [ %s ]!", tgTaskName);
       eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
       // Freeing the memory allocated for the message
-      free(tgMsg->title);
-      free(tgMsg->message);
-      delete tgMsg;
+      if (tgMsg->title) free(tgMsg->title);
+      if (tgMsg->message) free(tgMsg->message);
+      free(tgMsg);
     };
   };
 
@@ -178,8 +190,7 @@ void tgTaskExec(void *pvParameters)
           resAttempt = tgSendEx(tgMsg);
           if (resAttempt) {
             eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
-          }
-          else {
+          } else {
             eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
             tryAttempt++;
             vTaskDelay(pdMS_TO_TICKS(CONFIG_TELEGRAM_ATTEMPTS_INTERVAL));
@@ -188,19 +199,29 @@ void tgTaskExec(void *pvParameters)
       } while (!resAttempt && (tryAttempt <= CONFIG_TELEGRAM_MAX_ATTEMPTS));
       
       // Debug log output
-      if (resAttempt) {
-        rlog_i(logTAG, "Message sent: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
-      }
-      else {
-        rlog_e(logTAG, "Failed to send message [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
+      if (tgMsg->title) {
+        if (resAttempt) {
+          rlog_i(logTAG, "Message sent: %s :: %s", tgMsg->title, tgMsg->message);
+        }
+        else {
+          rlog_e(logTAG, "Failed to send message %s :: %s", tgMsg->title, tgMsg->message);
+        };
+      } else {
+        if (resAttempt) {
+          rlog_i(logTAG, "Message sent: %s", tgMsg->message);
+        }
+        else {
+          rlog_e(logTAG, "Failed to send message %s", tgMsg->message);
+        };
       };
 
       // Removing a message from the queue (anyway)
       xQueueReceive(_tgQueue, &tgMsg, 0);
       // Freeing the memory allocated for the message
-      free(tgMsg->title);
-      free(tgMsg->message);
-      delete tgMsg;
+      if (tgMsg->title) free(tgMsg->title);
+      if (tgMsg->message) free(tgMsg->message);
+      free(tgMsg);
+      tgMsg = nullptr;
     };
   };
 
