@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h" 
 #include "project_config.h"
+#include "def_consts.h"
 #include "rLog.h"
 #include "rStrings.h"
 #include "reTgSend.h"
