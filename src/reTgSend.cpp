@@ -32,7 +32,9 @@
 
 typedef struct {
   int64_t chat_id;
+  #if CONFIG_TELEGRAM_TITLE_ENABLED
   char* title;
+  #endif // CONFIG_TELEGRAM_TITLE_ENABLED
   char* message;
   time_t timestamp;
   bool notify;
@@ -74,96 +76,122 @@ bool tgSendEx(const tgMessage_t* tgMsg)
   localtime_r(&tgMsg->timestamp, &timeinfo);
   strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_FORMAT_DTS, &timeinfo);
   char* json = nullptr;
-  if (tgMsg->title) {
-    json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_TITLED, 
-      CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
-  } else {
+  #if CONFIG_TELEGRAM_TITLE_ENABLED
+    if (tgMsg->title) {
+      json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_TITLED, 
+        CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
+    } else {
+      json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_SIMPLE, 
+        CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->message, buffer_timestamp);
+    };
+  #else
     json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_SIMPLE, 
       CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->message, buffer_timestamp);
-  };
+  #endif // CONFIG_TELEGRAM_TITLE_ENABLED
 
-  // Configuring request parameters
-  esp_http_client_config_t cfgHttp;
-  memset(&cfgHttp, 0, sizeof(cfgHttp));
-  cfgHttp.method = HTTP_METHOD_POST;
-  cfgHttp.host = API_TELEGRAM_HOST;
-  cfgHttp.port = API_TELEGRAM_PORT;
-  cfgHttp.path = API_TELEGRAM_SEND_MESSAGE;
-  cfgHttp.use_global_ca_store = false;
-  cfgHttp.transport_type = HTTP_TRANSPORT_OVER_SSL;
-  cfgHttp.cert_pem = api_telegram_org_pem_start;
-  cfgHttp.skip_cert_common_name_check = false;
-  cfgHttp.is_async = false;
+  // Send request
+  if (json) {
+    // Configuring request parameters
+    static esp_http_client_config_t cfgHttp;
+    memset(&cfgHttp, 0, sizeof(cfgHttp));
+    cfgHttp.method = HTTP_METHOD_POST;
+    cfgHttp.host = API_TELEGRAM_HOST;
+    cfgHttp.port = API_TELEGRAM_PORT;
+    cfgHttp.path = API_TELEGRAM_SEND_MESSAGE;
+    cfgHttp.use_global_ca_store = false;
+    cfgHttp.transport_type = HTTP_TRANSPORT_OVER_SSL;
+    cfgHttp.cert_pem = api_telegram_org_pem_start;
+    cfgHttp.skip_cert_common_name_check = false;
+    cfgHttp.is_async = false;
 
-  // Making a request to the Telegram API
-  esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
-  if (client != NULL) {
-    esp_http_client_set_header(client, API_TELEGRAM_HEADER_CTYPE, API_TELEGRAM_HEADER_AJSON);
-    esp_http_client_set_post_field(client, json, strlen(json));
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-      int retCode = esp_http_client_get_status_code(client);
-      _result = ((retCode == 200) || (retCode == 301));
-      if (!_result) {
-        rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
+    // Making a request to the Telegram API
+    esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
+    if (client) {
+      esp_http_client_set_header(client, API_TELEGRAM_HEADER_CTYPE, API_TELEGRAM_HEADER_AJSON);
+      esp_http_client_set_post_field(client, json, strlen(json));
+      esp_err_t err = esp_http_client_perform(client);
+      if (err == ESP_OK) {
+        int retCode = esp_http_client_get_status_code(client);
+        _result = ((retCode == 200) || (retCode == 301));
+        if (!_result) {
+          rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
+        };
+        // Flashing system LED
+        ledSysActivity();
+      }
+      else {
+        _result = false;
+        rlog_e(logTAG, "Failed to complete request to Telegram API, error code: 0x%x!", err);
       };
-      // Flashing system LED
-      ledSysActivity();
+      esp_http_client_cleanup(client);
     }
     else {
       _result = false;
-      rlog_e(logTAG, "Failed to complete request to Telegram API, error code: 0x%x!", err);
+      rlog_e(logTAG, "Failed to complete request to Telegram API!");
     };
-    esp_http_client_cleanup(client);
-  }
-  else {
+    // Free buffer
+    free(json);
+  } else {
     _result = false;
-    rlog_e(logTAG, "Failed to complete request to Telegram API!");
+    rlog_e(logTAG, "Failed to create request text to Telegram API");
   };
-
-  if (json) free(json);
+  
   return _result;
 }
 
 bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...)
 {
   if (_tgQueue) {
-    uint32_t lenTitle;
-    uint32_t lenText;
-    va_list msgArgs;
-
-    // Allocating memory for the message
     tgMessage_t* tgMsg = (tgMessage_t*)calloc(1, sizeof(tgMessage_t));
-    tgMsg->notify = msgNotify;
-    tgMsg->timestamp = time(NULL);
+    if (tgMsg) {
+      tgMsg->notify = msgNotify;
+      tgMsg->timestamp = time(nullptr);
 
-    // Allocating memory for the message header
-    #if CONFIG_TELEGRAM_TITLE_ENABLED
-      lenTitle = snprintf(NULL, 0, msgTitle);
-      tgMsg->title = (char*)calloc(1, lenTitle+1);
-      snprintf(tgMsg->title, lenTitle+1, msgTitle);
-    #else
-      tgMsg->title = nullptr;
-    #endif // CONFIG_TELEGRAM_TITLE_ENABLED
-    
-    // Allocate memory for the message text and format it
-    va_start(msgArgs, msgText);
-    lenText = vsnprintf(NULL, 0, msgText, msgArgs);
-    tgMsg->message = (char*)calloc(1, lenText+1);
-    vsnprintf(tgMsg->message, lenText+1, msgText, msgArgs);
-    va_end(msgArgs);
+      // Allocating memory for the message header
+      #if CONFIG_TELEGRAM_TITLE_ENABLED
+        if (msgTitle) {
+          uint32_t lenTitle = snprintf(nullptr, 0, msgTitle);
+          tgMsg->title = (char*)calloc(1, lenTitle+1);
+          if (tgMsg->title) {
+            snprintf(tgMsg->title, lenTitle+1, msgTitle);
+          } else {
+            rlog_e(logTAG, "Failed to allocate memory for message header");
+          };
+        } else {
+          tgMsg->title = nullptr;
+        };
+      #endif // CONFIG_TELEGRAM_TITLE_ENABLED
+      
+      // Allocate memory for the message text and format it
+      va_list msgArgs;
+      va_start(msgArgs, msgText);
+      uint32_t lenText = vsnprintf(nullptr, 0, msgText, msgArgs);
+      tgMsg->message = (char*)calloc(1, lenText+1);
+      if (tgMsg->message) {
+        vsnprintf(tgMsg->message, lenText+1, msgText, msgArgs);
+      } else {
+        rlog_e(logTAG, "Failed to allocate memory for message text");
+      };
+      va_end(msgArgs);
 
-    // Add a message to the send queue
-    if (xQueueSend(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS) {
-      return true;
-    }
-    else {
-      rloga_e("Error adding message to queue [ %s ]!", tgTaskName);
-      eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
-      // Freeing the memory allocated for the message
-      if (tgMsg->title) free(tgMsg->title);
-      if (tgMsg->message) free(tgMsg->message);
-      free(tgMsg);
+      // Add a message to the send queue
+      if ((tgMsg->message) && (xQueueSend(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS)) {
+        return true;
+      }
+      else {
+        if (tgMsg->message) {
+          rloga_e("Error adding message to queue [ %s ]!", tgTaskName);
+        };
+        eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
+        // Freeing the memory allocated for the message
+        if (tgMsg->message) free(tgMsg->message);
+        #if CONFIG_TELEGRAM_TITLE_ENABLED
+        if (tgMsg->title) free(tgMsg->title);
+        #endif // CONFIG_TELEGRAM_TITLE_ENABLED
+        free(tgMsg);
+      };
+    } else {
+      rlog_e(logTAG, "Failed to allocate memory for message");
     };
   };
 
@@ -200,27 +228,20 @@ void tgTaskExec(void *pvParameters)
       } while (!resAttempt && (tryAttempt <= CONFIG_TELEGRAM_MAX_ATTEMPTS));
       
       // Debug log output
-      if (tgMsg->title) {
-        if (resAttempt) {
-          rlog_i(logTAG, "Message sent: %s :: %s", tgMsg->title, tgMsg->message);
-        }
-        else {
-          rlog_e(logTAG, "Failed to send message %s :: %s", tgMsg->title, tgMsg->message);
-        };
-      } else {
-        if (resAttempt) {
-          rlog_i(logTAG, "Message sent: %s", tgMsg->message);
-        }
-        else {
-          rlog_e(logTAG, "Failed to send message %s", tgMsg->message);
-        };
+      if (resAttempt) {
+        rlog_i(logTAG, "Message sent: %s", tgMsg->message);
+      }
+      else {
+        rlog_e(logTAG, "Failed to send message %s", tgMsg->message);
       };
 
       // Removing a message from the queue (anyway)
       xQueueReceive(_tgQueue, &tgMsg, 0);
       // Freeing the memory allocated for the message
-      if (tgMsg->title) free(tgMsg->title);
       if (tgMsg->message) free(tgMsg->message);
+      #if CONFIG_TELEGRAM_TITLE_ENABLED
+      if (tgMsg->title) free(tgMsg->title);
+      #endif // CONFIG_TELEGRAM_TITLE_ENABLED
       free(tgMsg);
       tgMsg = nullptr;
     };
