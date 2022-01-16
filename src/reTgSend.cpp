@@ -8,6 +8,7 @@
 #include "project_config.h"
 #include "def_consts.h"
 #include "rLog.h"
+#include "reEsp32.h"
 #include "rStrings.h"
 #include "reTgSend.h"
 #include "reEvents.h"
@@ -142,7 +143,7 @@ bool tgSendEx(const tgMessage_t* tgMsg)
 bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...)
 {
   if (_tgQueue) {
-    tgMessage_t* tgMsg = (tgMessage_t*)calloc(1, sizeof(tgMessage_t));
+    tgMessage_t* tgMsg = (tgMessage_t*)esp_calloc(1, sizeof(tgMessage_t));
     if (tgMsg) {
       tgMsg->notify = msgNotify;
       tgMsg->timestamp = time(nullptr);
@@ -151,7 +152,7 @@ bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...
       #if CONFIG_TELEGRAM_TITLE_ENABLED
         if (msgTitle) {
           uint32_t lenTitle = snprintf(nullptr, 0, msgTitle);
-          tgMsg->title = (char*)calloc(1, lenTitle+1);
+          tgMsg->title = (char*)esp_calloc(1, lenTitle+1);
           if (tgMsg->title) {
             snprintf(tgMsg->title, lenTitle+1, msgTitle);
           } else {
@@ -166,7 +167,7 @@ bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...
       va_list msgArgs;
       va_start(msgArgs, msgText);
       uint32_t lenText = vsnprintf(nullptr, 0, msgText, msgArgs);
-      tgMsg->message = (char*)calloc(1, lenText+1);
+      tgMsg->message = (char*)esp_calloc(1, lenText+1);
       if (tgMsg->message) {
         vsnprintf(tgMsg->message, lenText+1, msgText, msgArgs);
       } else {
