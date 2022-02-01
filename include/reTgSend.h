@@ -11,6 +11,13 @@
 
 #include <stddef.h>
 
+typedef enum {
+  TG_MAIN = 0,
+  TG_SERVICE,
+  TG_PARAMS,
+  TG_SECURITY
+} tg_chat_type_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,7 +50,7 @@ bool tgTaskDelete();
  * @param ... - formatting options
  * @return true - successful, false - failure
  * */
-bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...);
+bool tgSend(tg_chat_type_t chatId, bool msgNotify, const char* msgTitle, const char* msgText, ...);
 
 /**
  * @brief Registering event handlers to automatically send notifications

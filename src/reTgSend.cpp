@@ -32,7 +32,7 @@
 #define API_TELEGRAM_TRUE "true"
 
 typedef struct {
-  int64_t chat_id;
+  tg_chat_type_t chat;
   #if CONFIG_TELEGRAM_TITLE_ENABLED
   char* title;
   #endif // CONFIG_TELEGRAM_TITLE_ENABLED
@@ -73,78 +73,118 @@ bool tgSendEx(const tgMessage_t* tgMsg)
   struct tm timeinfo;
   static char buffer_timestamp[20];
 
-  // Formation of the request text (message)
-  localtime_r(&tgMsg->timestamp, &timeinfo);
-  strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_FORMAT_DTS, &timeinfo);
-  char* json = nullptr;
-  #if CONFIG_TELEGRAM_TITLE_ENABLED
-    if (tgMsg->title) {
-      json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_TITLED, 
-        CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
-    } else {
+  // Determine chat ID
+  const char* chat_id = "";
+  switch (tgMsg->chat) {
+    case TG_SERVICE:
+      #ifdef CONFIG_TELEGRAM_CHAT_ID_SERVICE
+        chat_id = CONFIG_TELEGRAM_CHAT_ID_SERVICE;
+      #else
+        chat_id = CONFIG_TELEGRAM_CHAT_ID_MAIN;
+      #endif // CONFIG_TELEGRAM_CHAT_ID_SERVICE
+      break;
+
+    case TG_PARAMS:
+      #ifdef CONFIG_TELEGRAM_CHAT_ID_PARAMS
+        chat_id = CONFIG_TELEGRAM_CHAT_ID_PARAMS;
+      #else
+        chat_id = CONFIG_TELEGRAM_CHAT_ID_MAIN;
+      #endif // CONFIG_TELEGRAM_CHAT_ID_PARAMS
+      break;
+
+    case TG_SECURITY:
+      #ifdef CONFIG_TELEGRAM_CHAT_ID_SECURITY
+        chat_id = CONFIG_TELEGRAM_CHAT_ID_SECURITY;
+      #else
+        chat_id = CONFIG_TELEGRAM_CHAT_ID_MAIN;
+      #endif // CONFIG_TELEGRAM_CHAT_ID_SECURITY
+      break;
+
+    default:
+      chat_id = CONFIG_TELEGRAM_CHAT_ID_MAIN;
+      break;
+  }
+  
+  if (strcmp(chat_id, "") != 0) {
+    // Formation of the request text (message)
+    localtime_r(&tgMsg->timestamp, &timeinfo);
+    strftime(buffer_timestamp, sizeof(buffer_timestamp), CONFIG_FORMAT_DTS, &timeinfo);
+    char* json = nullptr;
+    #if CONFIG_TELEGRAM_TITLE_ENABLED
+      if (tgMsg->title) {
+        json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_TITLED, 
+          chat_id, tgNotifyEx(tgMsg), tgMsg->title, tgMsg->message, buffer_timestamp);
+      } else {
+        json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_SIMPLE, 
+          chat_id, tgNotifyEx(tgMsg), tgMsg->message, buffer_timestamp);
+      };
+    #else
       json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_SIMPLE, 
-        CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->message, buffer_timestamp);
-    };
-  #else
-    json = malloc_stringf(API_TELEGRAM_TMPL_MESSAGE_SIMPLE, 
-      CONFIG_TELEGRAM_CHAT_ID, tgNotifyEx(tgMsg), tgMsg->message, buffer_timestamp);
-  #endif // CONFIG_TELEGRAM_TITLE_ENABLED
+        chat_id, tgNotifyEx(tgMsg), tgMsg->message, buffer_timestamp);
+    #endif // CONFIG_TELEGRAM_TITLE_ENABLED
 
-  // Send request
-  if (json) {
-    // Configuring request parameters
-    static esp_http_client_config_t cfgHttp;
-    memset(&cfgHttp, 0, sizeof(cfgHttp));
-    cfgHttp.method = HTTP_METHOD_POST;
-    cfgHttp.host = API_TELEGRAM_HOST;
-    cfgHttp.port = API_TELEGRAM_PORT;
-    cfgHttp.path = API_TELEGRAM_SEND_MESSAGE;
-    cfgHttp.use_global_ca_store = false;
-    cfgHttp.transport_type = HTTP_TRANSPORT_OVER_SSL;
-    cfgHttp.cert_pem = api_telegram_org_pem_start;
-    cfgHttp.skip_cert_common_name_check = false;
-    cfgHttp.is_async = false;
+    // Send request
+    if (json) {
+      // Configuring request parameters
+      static esp_http_client_config_t cfgHttp;
+      memset(&cfgHttp, 0, sizeof(cfgHttp));
+      cfgHttp.method = HTTP_METHOD_POST;
+      cfgHttp.host = API_TELEGRAM_HOST;
+      cfgHttp.port = API_TELEGRAM_PORT;
+      cfgHttp.path = API_TELEGRAM_SEND_MESSAGE;
+      cfgHttp.use_global_ca_store = false;
+      cfgHttp.transport_type = HTTP_TRANSPORT_OVER_SSL;
+      cfgHttp.cert_pem = api_telegram_org_pem_start;
+      cfgHttp.skip_cert_common_name_check = false;
+      cfgHttp.is_async = false;
 
-    // Making a request to the Telegram API
-    esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
-    if (client) {
-      esp_http_client_set_header(client, API_TELEGRAM_HEADER_CTYPE, API_TELEGRAM_HEADER_AJSON);
-      esp_http_client_set_post_field(client, json, strlen(json));
-      esp_err_t err = esp_http_client_perform(client);
-      if (err == ESP_OK) {
-        int retCode = esp_http_client_get_status_code(client);
-        _result = ((retCode == 200) || (retCode == 301));
-        if (!_result) {
-          rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
+      // Making a request to the Telegram API
+      esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
+      if (client) {
+        esp_http_client_set_header(client, API_TELEGRAM_HEADER_CTYPE, API_TELEGRAM_HEADER_AJSON);
+        esp_http_client_set_post_field(client, json, strlen(json));
+        esp_err_t err = esp_http_client_perform(client);
+        if (err == ESP_OK) {
+          int retCode = esp_http_client_get_status_code(client);
+          _result = ((retCode == 200) || (retCode == 301));
+          if (!_result) {
+            rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
+          };
+          #if !defined(CONFIG_TELEGRAM_SYSLED_ACTIVITY) || CONFIG_TELEGRAM_SYSLED_ACTIVITY
+            // Flashing system LED
+            ledSysActivity();
+          #endif // CONFIG_TELEGRAM_SYSLED_ACTIVITY
+        }
+        else {
+          _result = false;
+          rlog_e(logTAG, "Failed to complete request to Telegram API, error code: 0x%x!", err);
         };
-        // Flashing system LED
-        ledSysActivity();
+        esp_http_client_cleanup(client);
       }
       else {
         _result = false;
-        rlog_e(logTAG, "Failed to complete request to Telegram API, error code: 0x%x!", err);
+        rlog_e(logTAG, "Failed to complete request to Telegram API!");
       };
-      esp_http_client_cleanup(client);
-    }
-    else {
+      // Free buffer
+      free(json);
+    } else {
       _result = false;
-      rlog_e(logTAG, "Failed to complete request to Telegram API!");
+      rlog_e(logTAG, "Failed to create request text to Telegram API");
     };
-    // Free buffer
-    free(json);
   } else {
-    _result = false;
-    rlog_e(logTAG, "Failed to create request text to Telegram API");
+    _result = true;
+    rlog_d(logTAG, "Chat ID not set, message ignored");
   };
-  
+
   return _result;
 }
 
-bool tgSend(const bool msgNotify, const char* msgTitle, const char* msgText, ...)
+bool tgSend(tg_chat_type_t chatId, bool msgNotify, const char* msgTitle, const char* msgText, ...)
 {
   if (_tgQueue) {
     tgMessage_t* tgMsg = (tgMessage_t*)esp_calloc(1, sizeof(tgMessage_t));
     if (tgMsg) {
+      tgMsg->chat = chatId;
       tgMsg->notify = msgNotify;
       tgMsg->timestamp = time(nullptr);
 
