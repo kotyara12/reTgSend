@@ -45,6 +45,7 @@ typedef struct {
 
 TaskHandle_t _tgTask;
 QueueHandle_t _tgQueue = NULL;
+static bool _tgEventHablers = false;
 
 static const char* logTAG = "TG";
 static const char* tgTaskName = "tg_send";
@@ -323,12 +324,11 @@ bool tgTaskCreate(bool createSuspended)
         rloga_i("Task [ %s ] has been successfully created", tgTaskName);
         tgTaskSuspend();
         eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
-        return tgEventHandlerRegister();
       } else {
         rloga_i("Task [ %s ] has been successfully started", tgTaskName);
         eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
-        return true;
       };
+      return tgEventHandlerRegister();
     };
   }
   else {
@@ -432,12 +432,25 @@ static void tgTelegramEventHandler(void* arg, esp_event_base_t event_base, int32
 
 bool tgEventHandlerRegister()
 {
-  bool ret = eventHandlerRegister(RE_WIFI_EVENTS, ESP_EVENT_ANY_ID, &tgWiFiEventHandler, nullptr);
-  #if CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
-    ret = ret && eventHandlerRegister(RE_PING_EVENTS, RE_PING_TG_API_AVAILABLE, &tgTelegramEventHandler, nullptr);
-    ret = ret && eventHandlerRegister(RE_PING_EVENTS, RE_PING_TG_API_UNAVAILABLE, &tgTelegramEventHandler, nullptr);
-  #endif // CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
-  return ret;
+  if (!_tgEventHablers) {
+    _tgEventHablers = eventHandlerRegister(RE_WIFI_EVENTS, ESP_EVENT_ANY_ID, &tgWiFiEventHandler, nullptr);
+    #if CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+      if (_tgEventHablers) {
+        _tgEventHablers = eventHandlerRegister(RE_PING_EVENTS, RE_PING_TG_API_AVAILABLE, &tgTelegramEventHandler, nullptr);
+        if (!_tgEventHablers) {
+          eventHandlerUnregister(RE_WIFI_EVENTS, ESP_EVENT_ANY_ID, &tgWiFiEventHandler);
+        };
+      };
+      if (_tgEventHablers) {
+        _tgEventHablers = eventHandlerRegister(RE_PING_EVENTS, RE_PING_TG_API_UNAVAILABLE, &tgTelegramEventHandler, nullptr);
+        if (!_tgEventHablers) {
+          eventHandlerUnregister(RE_WIFI_EVENTS, ESP_EVENT_ANY_ID, &tgWiFiEventHandler);
+          eventHandlerUnregister(RE_PING_EVENTS, RE_PING_TG_API_AVAILABLE, &tgTelegramEventHandler);
+        };
+      };
+    #endif // CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+  };
+  return _tgEventHablers;
 }
 
 void tgEventHandlerUnregister()
@@ -447,4 +460,5 @@ void tgEventHandlerUnregister()
     eventHandlerUnregister(RE_PING_EVENTS, RE_PING_TG_API_AVAILABLE, &tgTelegramEventHandler);
     eventHandlerUnregister(RE_PING_EVENTS, RE_PING_TG_API_UNAVAILABLE, &tgTelegramEventHandler);
   #endif // CONFIG_PINGER_ENABLE && defined(CONFIG_TELEGRAM_HOST_CHECK)
+  _tgEventHablers = false;
 }
