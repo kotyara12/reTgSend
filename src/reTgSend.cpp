@@ -22,6 +22,7 @@
 
 #define API_TELEGRAM_HOST "api.telegram.org"
 #define API_TELEGRAM_PORT 443
+#define API_TELEGRAM_TIMEOUT_MS 60000
 #define API_TELEGRAM_BOT_PATH "/bot" CONFIG_TELEGRAM_TOKEN
 #define API_TELEGRAM_SEND_MESSAGE API_TELEGRAM_BOT_PATH "/sendMessage"
 #define API_TELEGRAM_TMPL_MESSAGE_TITLED "{\"chat_id\":%s,\"parse_mode\":\"HTML\",\"disable_notification\":%s,\"text\":\"<b>%s</b>\r\n\r\n%s\r\n\r\n<code>%s</code>\"}"
@@ -133,6 +134,7 @@ bool tgSendEx(const tgMessage_t* tgMsg)
       cfgHttp.host = API_TELEGRAM_HOST;
       cfgHttp.port = API_TELEGRAM_PORT;
       cfgHttp.path = API_TELEGRAM_SEND_MESSAGE;
+      cfgHttp.timeout_ms = API_TELEGRAM_TIMEOUT_MS;
       cfgHttp.use_global_ca_store = false;
       cfgHttp.transport_type = HTTP_TRANSPORT_OVER_SSL;
       cfgHttp.cert_pem = api_telegram_org_pem_start;
@@ -147,7 +149,7 @@ bool tgSendEx(const tgMessage_t* tgMsg)
         esp_err_t err = esp_http_client_perform(client);
         if (err == ESP_OK) {
           int retCode = esp_http_client_get_status_code(client);
-          _result = ((retCode == 200) || (retCode == 301));
+          _result = ((retCode >= HttpStatus_Ok) && (retCode <= HttpStatus_BadRequest));
           if (!_result) {
             rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
           };
@@ -198,6 +200,7 @@ bool tgSend(tg_chat_type_t chatId, bool msgNotify, const char* msgTitle, const c
             snprintf(tgMsg->title, lenTitle+1, msgTitle);
           } else {
             rlog_e(logTAG, "Failed to allocate memory for message header");
+            goto error;
           };
         } else {
           tgMsg->title = nullptr;
@@ -213,30 +216,32 @@ bool tgSend(tg_chat_type_t chatId, bool msgNotify, const char* msgTitle, const c
         vsnprintf(tgMsg->message, lenText+1, msgText, msgArgs);
       } else {
         rlog_e(logTAG, "Failed to allocate memory for message text");
+        va_end(msgArgs);
+        goto error;
       };
       va_end(msgArgs);
 
       // Add a message to the send queue
-      if ((tgMsg->message) && (xQueueSend(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS)) {
+      if (xQueueSend(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS) {
         return true;
-      }
-      else {
-        if (tgMsg->message) {
-          rloga_e("Error adding message to queue [ %s ]!", tgTaskName);
-        };
+      } else {
+        rloga_e("Error adding message to queue [ %s ]!", tgTaskName);
         eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_SET, false);
-        // Freeing the memory allocated for the message
-        if (tgMsg->message) free(tgMsg->message);
-        #if CONFIG_TELEGRAM_TITLE_ENABLED
-        if (tgMsg->title) free(tgMsg->title);
-        #endif // CONFIG_TELEGRAM_TITLE_ENABLED
-        free(tgMsg);
+        goto error;
       };
     } else {
       rlog_e(logTAG, "Failed to allocate memory for message");
     };
+  error:
+    // Deallocate resources from heap
+    if (tgMsg) {
+      if (tgMsg->message) free(tgMsg->message);
+      #if CONFIG_TELEGRAM_TITLE_ENABLED
+      if (tgMsg->title) free(tgMsg->title);
+      #endif // CONFIG_TELEGRAM_TITLE_ENABLED
+      free(tgMsg);
+    };
   };
-
   return false;
 }
 
@@ -251,13 +256,13 @@ void tgTaskExec(void *pvParameters)
   while (true) {
     if (xQueuePeek(_tgQueue, &tgMsg, portMAX_DELAY) == pdPASS) {
       rlog_v(logTAG, "Message received from queue: [%d] %s :: %s", tgMsg->timestamp, tgMsg->title, tgMsg->message);
-
+      
+      bool resAttempt = false;
       // Trying to send a message to the Telegram API
       uint16_t tryAttempt = 1;
-      bool resAttempt = false;
       do {
-        // Checking Internet and host availability
-        if (statesInetWait(pdMS_TO_TICKS(CONFIG_TELEGRAM_ATTEMPTS_INTERVAL))) {
+        // Checking Internet availability
+        if ((tryAttempt <= (CONFIG_TELEGRAM_MAX_ATTEMPTS / 2)) || statesInetWaitMs(CONFIG_TELEGRAM_INTERNET_TIMEOUT)) {
           resAttempt = tgSendEx(tgMsg);
           if (resAttempt) {
             eventLoopPostSystem(RE_SYS_TELEGRAM_ERROR, RE_SYS_CLEAR, false);
