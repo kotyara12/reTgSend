@@ -10,13 +10,7 @@
 #define __RE_TGSEND_H__
 
 #include <stddef.h>
-
-typedef enum {
-  TG_MAIN = 0,
-  TG_SERVICE,
-  TG_PARAMS,
-  TG_SECURITY
-} tg_chat_type_t;
+#include "rTypes.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,10 +18,9 @@ extern "C" {
 
 /**
  * @brief We create and launch a task (and a queue) to send notifications.
- * @param createSuspended - if true, the task will be suspended immediately and event handlers will be registered
  * @return true - successful, false - failure
  * */
-bool tgTaskCreate(bool createSuspended);
+bool tgTaskCreate();
 
 /**
  * @brief We pause the task for sending notifications. For example, when disconnecting from WiFi.
@@ -43,22 +36,28 @@ bool tgTaskResume();
 bool tgTaskDelete();
 
 /**
- * @brief Add a message to the send queue. If the Internet is available, an attempt will be made to send a message almost immediately.
+ * Add a message to the send queue
+ * @brief Add a message to the send queue. If the Internet is available, an attempt will be made to send a message almost immediately
+ * @param msgOptions - message options (kind, priority and notification)
+ * @param msgTitle - message header
+ * @param msgText - message text or formatting template
+ * @param ... - formatting options
+ * @return true - successful, false - failure
+ * */
+bool tgSendMsg(msg_options_t msgOptions, const char* msgTitle, const char* msgText, ...);
+
+/**
+ * Easier adding a message to the send queue
+ * @brief Easier adding a message to the send queue (no need to code options)
+ * @param msgKind - kind of message, depending on this message can be sent to different chats or groups
+ * @param msgPriority - sending priority - in case of problems with the Internet, messages with low priority may not be sent
  * @param msgNotify - send a notification message
  * @param msgTitle - message header
  * @param msgText - message text or formatting template
  * @param ... - formatting options
  * @return true - successful, false - failure
  * */
-bool tgSend(tg_chat_type_t chatId, bool msgNotify, const char* msgTitle, const char* msgText, ...);
-
-/**
- * @brief Registering event handlers to automatically send notifications
- * 
- * @return true - successful, false - failure
- * */
-bool tgEventHandlerRegister();
-void tgEventHandlerUnregister();
+#define tgSend(msgKind, msgPriority, msgNotify, msgTitle, msgText, ...) tgSendMsg(encMsgOptions(msgKind, msgNotify, msgPriority), msgTitle, msgText, ##__VA_ARGS__)
 
 #ifdef __cplusplus
 }
