@@ -9,8 +9,32 @@
 #ifndef __RE_TGSEND_H__
 #define __RE_TGSEND_H__
 
+#include <stdio.h>
 #include <stddef.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include "project_config.h"
+#include "def_consts.h"
+#include "rLog.h"
 #include "rTypes.h"
+#include "rStrings.h"
+#include "reEsp32.h"
+#include "reTgSend.h"
+#include "reEvents.h"
+#include "reStates.h"
+
+#if defined(CONFIG_TELEGRAM_MESSAGE_SIZE) && (CONFIG_TELEGRAM_MESSAGE_SIZE > 0)
+  #define CONFIG_TELEGRAM_STATIC_MESSAGE_BUFFER 1
+#else
+  #define CONFIG_TELEGRAM_STATIC_MESSAGE_BUFFER 0
+#endif // CONFIG_TELEGRAM_MESSAGE_SIZE
+
+#if defined(CONFIG_TELEGRAM_OUTBOX_SIZE) && (CONFIG_TELEGRAM_OUTBOX_SIZE > 0)
+  #define CONFIG_TELEGRAM_OUTBOX_ENABLE 1
+#else
+  #define CONFIG_TELEGRAM_OUTBOX_ENABLE 0
+#endif // CONFIG_TELEGRAM_OUTBOX_SIZE
+
 
 #ifdef __cplusplus
 extern "C" {
