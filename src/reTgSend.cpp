@@ -5,6 +5,7 @@
 #include "freertos/queue.h" 
 #include "esp_wifi.h" 
 #include "esp_http_client.h"
+#include "mbedtls/ssl.h"
 
 #define API_TELEGRAM_HOST "api.telegram.org"
 #define API_TELEGRAM_PORT 443
@@ -53,13 +54,9 @@ static const char* tgTaskName = "tg_send";
   #define CONFIG_TELEGRAM_TLS_PEM_STORAGE TLS_CERT_BUFFER
 #endif // CONFIG_TELEGRAM_TLS_PEM_STORAGE
 
-#if CONFIG_TELEGRAM_TLS_PEM_STORAGE == TLS_CERT_BUFFER
+#if (CONFIG_TELEGRAM_TLS_PEM_STORAGE == TLS_CERT_BUFFER)
   extern const char api_telegram_org_pem_start[] asm(CONFIG_TELEGRAM_TLS_PEM_START);
   extern const char api_telegram_org_pem_end[]   asm(CONFIG_TELEGRAM_TLS_PEM_END);  
-#endif // CONFIG_TELEGRAM_TLS_PEM_STORAGE
-
-#if CONFIG_TELEGRAM_TLS_PEM_STORAGE == TLS_CERT_BUNGLE
-  #include "esp_crt_bundle.h"
 #endif // CONFIG_TELEGRAM_TLS_PEM_STORAGE
 
 #if CONFIG_TELEGRAM_STATIC_ALLOCATION
