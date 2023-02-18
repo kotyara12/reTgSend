@@ -79,7 +79,7 @@ esp_err_t tgSendApi(tgMessageItem_t* tgMsg)
   rlog_i(logTAG, "Send message: %s", tgMsg->message);
 
   struct tm timeinfo;
-  static char buffer_timestamp[20];
+  static char buffer_timestamp[CONFIG_BUFFER_LEN_INT64_RADIX10];
   #if CONFIG_TELEGRAM_STATIC_MESSAGE_BUFFER
     static char buffer_json[CONFIG_TELEGRAM_MESSAGE_SIZE+API_TELEGRAM_JSON_SIZE];
   #else 
