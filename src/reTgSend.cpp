@@ -282,7 +282,7 @@ void tgTaskExec(void *pvParameters)
     #if CONFIG_TELEGRAM_OUTBOX_ENABLE
       // Calculate the timeout for an incoming message
       if (_tgOutboxSize > 0) {
-        if (statesWiFiIsConnected()) {
+        if (statesNetworkIsConnected()) {
           // If the API denied service last time, you'll have to wait longer
           if (resLast == ESP_ERR_INVALID_RESPONSE) {
             waitIncoming = pdMS_TO_TICKS(CONFIG_TELEGRAM_FORBIDDEN_INTERVAL);
@@ -347,7 +347,7 @@ void tgTaskExec(void *pvParameters)
       };
 
       // Search for the first message in the outbox
-      if (statesWiFiIsConnected()) {
+      if (statesNetworkIsConnected()) {
         _tgOutboxSize = 0;
         uint8_t first_msg = 0xFF;
         time_t first_time = 0;
