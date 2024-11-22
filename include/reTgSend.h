@@ -35,6 +35,11 @@
   #define CONFIG_TELEGRAM_OUTBOX_ENABLE 0
 #endif // CONFIG_TELEGRAM_OUTBOX_SIZE
 
+typedef enum {
+  TG_NOTIFY_OFF    = 0,
+  TG_NOTIFY_SILENT = 1,
+  TG_NOTIFY_SOUND  = 2
+} tg_notify_mode_t;
 
 #ifdef __cplusplus
 extern "C" {

@@ -63,7 +63,7 @@ static const char* tgTaskName = "tg_send";
 StaticQueue_t _tgQueueBuffer;
 StaticTask_t _tgTaskBuffer;
 StackType_t _tgTaskStack[CONFIG_TELEGRAM_STACK_SIZE];
-uint8_t _tgQueueStorage [CONFIG_TELEGRAM_QUEUE_SIZE * TELEGRAM_QUEUE_ITEM_SIZE];
+uint8_t _tgQueueStorage[CONFIG_TELEGRAM_QUEUE_SIZE * TELEGRAM_QUEUE_ITEM_SIZE];
 #endif // CONFIG_TELEGRAM_STATIC_ALLOCATION
 
 char* tgNotifyApi(tgMessageItem_t* tgMsg)
@@ -205,7 +205,7 @@ esp_err_t tgSendApi(tgMessageItem_t* tgMsg)
 bool tgSendMsg(msg_options_t msgOptions, const char* msgTitle, const char* msgText, ...)
 {
   if (_tgQueue) {
-    tgMessage_t* tgMsg = (tgMessage_t*)esp_calloc(1, sizeof(tgMessage_t));
+    tgMessage_t* tgMsg = (tgMessage_t*)psram_calloc(1, sizeof(tgMessage_t));
     if (tgMsg) {
       tgMsg->options = msgOptions;
       tgMsg->timestamp = time(nullptr);
@@ -215,7 +215,7 @@ bool tgSendMsg(msg_options_t msgOptions, const char* msgTitle, const char* msgTe
       va_list args;
       va_start(args, msgText);
       uint16_t len = vsnprintf(nullptr, 0, msgText, args);
-      tgMsg->message = (char*)esp_calloc(1, len+1);
+      tgMsg->message = (char*)psram_calloc(1, len+1);
       if (tgMsg->message) {
         vsnprintf(tgMsg->message, len+1, msgText, args);
       } else {
